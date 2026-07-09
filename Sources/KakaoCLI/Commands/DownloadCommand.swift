@@ -7,6 +7,8 @@ import KakaoCore
 /// KakaoTalk stores only attachment *metadata* locally (signed CDN URLs), not the
 /// files themselves. Those URLs carry an `expire` timestamp, so only reasonably
 /// recent attachments are downloadable; expired ones are skipped (see `--force`).
+/// To refresh expired URLs, open the chat in KakaoTalk (or run `kakaocli harvest
+/// --scroll`, which needs Accessibility permission + the app running), then retry.
 struct DownloadCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "download",
@@ -63,9 +65,13 @@ struct DownloadCommand: ParsableCommand {
         let reader = try openDatabase(dbPath: db, key: key)
         defer { reader.close() }
 
+        // Resolve chat filter + build a chatId -> readable folder-name map.
+        let chats = try reader.chats(limit: 400)
+        var names: [Int64: String] = [:]
+        for c in chats where c.displayName != "(unknown)" { names[c.id] = c.displayName }
+
         var resolvedChatId = chatId
         if let chatName = chat, resolvedChatId == nil {
-            let chats = try reader.chats(limit: 300)
             guard let found = chats.first(where: {
                 $0.displayName.localizedCaseInsensitiveContains(chatName)
             }) else {
@@ -102,12 +108,17 @@ struct DownloadCommand: ParsableCommand {
             }
         }
 
+        func folder(_ chatId: Int64) -> String {
+            if let n = names[chatId] { return "\(Self.sanitize(n)) (\(chatId))" }
+            return String(chatId)
+        }
+
         if list {
-            report(items, statuses: items.map { _ in "listed" })
+            report(items, statuses: items.map { _ in "listed" }, folder: folder)
             return
         }
         if items.isEmpty {
-            report([], statuses: [])
+            report([], statuses: [], folder: folder)
             return
         }
 
@@ -119,7 +130,7 @@ struct DownloadCommand: ParsableCommand {
             if it.expired && !force { statuses.append("expired-skip"); continue }
             if let cs = it.checksum, seenChecksums.contains(cs) { statuses.append("dup-skip"); continue }
 
-            let dir = (out as NSString).appendingPathComponent(String(it.chatId))
+            let dir = (out as NSString).appendingPathComponent(folder(it.chatId))
             try? fm.createDirectory(atPath: dir, withIntermediateDirectories: true)
             let dest = (dir as NSString).appendingPathComponent(it.fileName)
 
@@ -135,13 +146,12 @@ struct DownloadCommand: ParsableCommand {
                 statuses.append("ok(\(data.count))")
                 if let cs = it.checksum { seenChecksums.insert(cs) }
             } catch {
-                // Expired/revoked URLs typically 403 here.
-                statuses.append("fail")
+                statuses.append("fail") // expired/revoked URLs typically 403 here
             }
         }
 
-        writeManifest(items: items, statuses: statuses)
-        report(items, statuses: statuses)
+        writeManifest(items: items, statuses: statuses, folder: folder)
+        report(items, statuses: statuses, folder: folder)
     }
 
     // MARK: - Parsing
@@ -218,12 +228,12 @@ struct DownloadCommand: ParsableCommand {
 
     // MARK: - Output
 
-    func writeManifest(items: [Item], statuses: [String]) {
+    func writeManifest(items: [Item], statuses: [String], folder: (Int64) -> String) {
         var entries: [[String: Any]] = []
         for (it, st) in zip(items, statuses) {
             entries.append([
                 "logId": it.logId, "chatId": it.chatId, "kind": it.kind,
-                "file": "\(it.chatId)/\(it.fileName)", "size": it.size,
+                "file": "\(folder(it.chatId))/\(it.fileName)", "size": it.size,
                 "checksum": it.checksum ?? "", "expired": it.expired,
                 "date": ISO8601DateFormatter().string(from: it.date), "status": st,
             ])
@@ -235,12 +245,13 @@ struct DownloadCommand: ParsableCommand {
         }
     }
 
-    func report(_ items: [Item], statuses: [String]) {
+    func report(_ items: [Item], statuses: [String], folder: (Int64) -> String) {
         if json {
             let arr = zip(items, statuses).map { it, st -> [String: Any] in
                 [
                     "logId": it.logId, "chatId": it.chatId, "kind": it.kind,
-                    "fileName": it.fileName, "size": it.size, "expired": it.expired,
+                    "folder": folder(it.chatId), "fileName": it.fileName,
+                    "size": it.size, "expired": it.expired,
                     "date": ISO8601DateFormatter().string(from: it.date), "status": st,
                 ]
             }
@@ -248,16 +259,31 @@ struct DownloadCommand: ParsableCommand {
             return
         }
         if items.isEmpty { print("No downloadable attachments found."); return }
-        var okCount = 0
+
         for (it, st) in zip(items, statuses) {
-            if st.hasPrefix("ok") { okCount += 1 }
-            let flag = it.expired ? "⏳expired" : ""
+            let flag = it.expired ? "⏳expired " : ""
             let mb = String(format: "%.1fMB", Double(it.size) / 1_048_576)
-            print("[\(it.kind)] \(it.fileName)  \(mb)  \(flag)  \(st)")
+            print("[\(it.kind)] \(it.fileName)  \(mb)  \(flag)\(st)")
         }
+
+        // Summary.
+        var byKind: [String: Int] = [:]
+        var okBytes: Int64 = 0
+        var okCount = 0
+        var expiredCount = 0
+        for (it, st) in zip(items, statuses) {
+            byKind[it.kind, default: 0] += 1
+            if it.expired { expiredCount += 1 }
+            if st.hasPrefix("ok") { okCount += 1; okBytes += it.size }
+        }
+        let kindStr = byKind.sorted { $0.key < $1.key }.map { "\($0.key) \($0.value)" }.joined(separator: " · ")
+        print("---")
+        print("첨부 \(items.count)개 (\(kindStr))")
         if !list {
-            print("---")
-            print("\(okCount)개 다운로드 → \(out)/  (매니페스트: \(out)/manifest.json)")
+            print("다운로드 \(okCount)개 · \(String(format: "%.1f", Double(okBytes) / 1_048_576))MB → \(out)/  (manifest.json)")
+        }
+        if expiredCount > 0 && !force {
+            print("⏳ 만료 \(expiredCount)개 스킵 — 카톡에서 해당 방을 열어 동기화(또는 `kakaocli harvest --scroll`, Accessibility 필요) 후 재시도하면 받을 수 있어요.")
         }
     }
 }
