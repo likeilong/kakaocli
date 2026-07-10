@@ -57,6 +57,7 @@ struct DownloadCommand: ParsableCommand {
         let checksum: String?
         let expired: Bool
         let date: Date
+        let index: Int         // position within a multi-photo album (0 for single media)
     }
 
     // MARK: - Run
@@ -80,7 +81,8 @@ struct DownloadCommand: ParsableCommand {
             resolvedChatId = found.id
         }
 
-        var conds = ["attachment LIKE '%\"url\"%'"]
+        // Single media carries "url"; multi-photo albums (type 27) carry "imageUrls" instead.
+        var conds = ["(attachment LIKE '%\"url\"%' OR attachment LIKE '%\"imageUrls\"%')"]
         if let cid = resolvedChatId { conds.append("chatId = \(cid)") }
         if let s = since, let d = parseDuration(s) {
             conds.append("sentAt >= \(Int64(d.timeIntervalSince1970))")
@@ -101,11 +103,9 @@ struct DownloadCommand: ParsableCommand {
             let type = Int(row[2] as? Int64 ?? 0)
             let attStr = row[3] as? String ?? ""
             let sentAt = row[4] as? Int64 ?? 0
-            if let it = Self.parse(logId: logId, chatId: cid, type: type,
-                                   attachment: attStr, now: now,
-                                   date: Date(timeIntervalSince1970: Double(sentAt))) {
-                items.append(it)
-            }
+            items.append(contentsOf: Self.parseAll(
+                logId: logId, chatId: cid, type: type, attachment: attStr, now: now,
+                date: Date(timeIntervalSince1970: Double(sentAt))))
         }
 
         func folder(_ chatId: Int64) -> String {
@@ -156,19 +156,43 @@ struct DownloadCommand: ParsableCommand {
 
     // MARK: - Parsing
 
-    /// Returns a downloadable Item for supported media types, or nil to skip.
-    static func parse(logId: Int64, chatId: Int64, type: Int, attachment: String,
-                      now: TimeInterval, date: Date) -> Item? {
+    /// Returns downloadable Items. A multi-photo album (type 27) expands to one Item per image.
+    static func parseAll(logId: Int64, chatId: Int64, type: Int, attachment: String,
+                         now: TimeInterval, date: Date) -> [Item] {
         guard let data = attachment.data(using: .utf8),
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let url = obj["url"] as? String, !url.isEmpty else { return nil }
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return [] }
+
+        // Multi-photo album: keys/urls/checksums are parallel arrays, one shared `expire`.
+        if type == 27, let urls = obj["imageUrls"] as? [String], !urls.isEmpty {
+            let csl = obj["csl"] as? [String] ?? []
+            let mtl = obj["mtl"] as? [String] ?? []
+            let sl = obj["sl"] as? [Any] ?? []
+            var expired = false
+            if let exp = num(obj["expire"]).map(Double.init) {
+                let expSec = exp > 1_000_000_000_000 ? exp / 1000 : exp
+                expired = expSec < now
+            }
+            return urls.enumerated().compactMap { i, u in
+                guard !u.isEmpty else { return nil }
+                let cs = i < csl.count && !csl[i].isEmpty ? csl[i] : nil
+                let mt = i < mtl.count ? mtl[i] : nil
+                let ext = fileExtension(kind: "photo", mt: mt, name: nil)
+                let name = "\(cs ?? "\(logId)_\(i)").\(ext)"
+                return Item(logId: logId, chatId: chatId, kind: "photo", url: u,
+                            fileName: name, size: i < sl.count ? (num(sl[i]) ?? 0) : 0,
+                            checksum: cs, expired: expired, date: date, index: i)
+            }
+        }
+
+        guard let url = obj["url"] as? String, !url.isEmpty else { return [] }
 
         let kind: String
         switch type {
         case 2: kind = "photo"
         case 3: kind = "video"
         case 18: kind = "file"
-        default: return nil // contacts(4)/stickers(6)/votes(24)/etc. are not downloadable files
+        default: return [] // contacts(4)/stickers(6)/votes(24)/etc. are not downloadable files
         }
 
         let size = num(obj["s"]) ?? num(obj["size"]) ?? 0
@@ -193,9 +217,9 @@ struct DownloadCommand: ParsableCommand {
             fileName = "\(checksum ?? String(logId)).\(ext)"
         }
 
-        return Item(logId: logId, chatId: chatId, kind: kind, url: url,
-                    fileName: fileName, size: size, checksum: checksum,
-                    expired: expired, date: date)
+        return [Item(logId: logId, chatId: chatId, kind: kind, url: url,
+                     fileName: fileName, size: size, checksum: checksum,
+                     expired: expired, date: date, index: 0)]
     }
 
     static func num(_ v: Any?) -> Int64? {
@@ -252,7 +276,7 @@ struct DownloadCommand: ParsableCommand {
             let arr = zip(items, statuses).map { it, st -> [String: Any] in
                 [
                     "logId": it.logId, "chatId": it.chatId, "kind": it.kind,
-                    "folder": folder(it.chatId), "fileName": it.fileName,
+                    "folder": folder(it.chatId), "fileName": it.fileName, "index": it.index,
                     "size": it.size, "expired": it.expired,
                     "date": ISO8601DateFormatter().string(from: it.date), "status": st,
                 ]
