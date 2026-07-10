@@ -172,7 +172,9 @@ struct DownloadCommand: ParsableCommand {
         }
 
         let size = num(obj["s"]) ?? num(obj["size"]) ?? 0
-        let checksum = obj["cs"] as? String
+        // KakaoTalk sometimes stores "cs":"" (empty). Treat that as absent, otherwise the
+        // filename becomes ".jpg" (a hidden file) and every empty-cs item collides as dup-skip.
+        let checksum = (obj["cs"] as? String).flatMap { $0.isEmpty ? nil : $0 }
         let mt = obj["mt"] as? String
         let originalName = obj["name"] as? String
 
