@@ -90,7 +90,7 @@ public final class KakaoAutomator {
             if chatWindow != nil { break }
         }
         guard let chatWindow else {
-            throw AutomationError.inputFieldNotFound
+            throw AutomationError.chatWindowNotOpened(chatName)
         }
 
         // 8. Find the message input field
@@ -144,6 +144,9 @@ public final class KakaoAutomator {
 public enum AutomationError: Error, CustomStringConvertible {
     case noWindows
     case chatNotFound(String)
+    /// 방은 찾아 열었는데 채팅창이 제때 뜨지 않음. 입력창 구조 문제와 구별해야
+    /// 진단이 된다 — 둘을 같은 에러로 던지는 바람에 한참 헤맸다(2026-10-31).
+    case chatWindowNotOpened(String)
     case inputFieldNotFound
     case sendFailed(String)
 
@@ -153,6 +156,8 @@ public enum AutomationError: Error, CustomStringConvertible {
             return "KakaoTalk has no open windows"
         case .chatNotFound(let name):
             return "Chat '\(name)' not found in the chat list"
+        case .chatWindowNotOpened(let name):
+            return "Opened '\(name)' but its chat window did not appear in time"
         case .inputFieldNotFound:
             return "Could not find the message input field"
         case .sendFailed(let msg):

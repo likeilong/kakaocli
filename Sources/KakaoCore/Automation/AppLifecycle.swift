@@ -287,6 +287,22 @@ public enum AppLifecycle {
     /// Uses AppleScript to click "Open KakaoTalk" in the status bar menu,
     /// which is the only reliable way since the AX hierarchy is non-standard.
     private static func showMainWindow(_ axApp: AXUIElement) {
+        // 1) Dock 아이콘을 누른 것과 같은 효과. 이미 실행 중이어도 reopen 이벤트가 전달돼
+        //    닫혀 있던 메인 창이 복구된다. Accessibility 가 필요 없어 가장 확실하다.
+        //    launch() 는 isRunning() 이면 일찍 반환하므로 이 경로를 타지 않는다 —
+        //    그래서 "앱은 떠 있는데 창이 0개"인 상태에서 영영 못 열었다(2026-10-31 실측:
+        //    send 가 "Could not find the message input field" 로 끝났다).
+        let reopen = Process()
+        reopen.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        reopen.arguments = ["-a", appPath]
+        reopen.standardOutput = FileHandle.nullDevice
+        reopen.standardError = FileHandle.nullDevice
+        try? reopen.run()
+        reopen.waitUntilExit()
+        Thread.sleep(forTimeInterval: 1.0)
+        if !AXHelpers.windows(axApp).isEmpty { return }
+
+        // 2) 그래도 창이 없으면 메뉴 막대 extra 의 '카카오톡 열기'를 누른다(구버전 경로).
         let script = """
         tell application "System Events"
             tell process "KakaoTalk"
