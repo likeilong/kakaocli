@@ -70,6 +70,15 @@ public enum AXHelpers {
     }
 
     /// Get the title/description of an element.
+    /// 앱이 지금 포커스하고 있는 창. **Return 키는 여기로 간다** — 창 제목이 맞아도
+    /// 포커스가 다른 창에 있으면 메시지가 엉뚱한 곳으로 전송된다.
+    public static func focusedWindow(_ appElement: AXUIElement) -> AXUIElement? {
+        var value: AnyObject?
+        let r = AXUIElementCopyAttributeValue(appElement, kAXFocusedWindowAttribute as CFString, &value)
+        guard r == .success, let v = value else { return nil }
+        return (v as! AXUIElement)
+    }
+
     public static func title(_ element: AXUIElement) -> String? {
         attribute(element, kAXTitleAttribute as String)
     }

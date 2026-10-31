@@ -124,19 +124,36 @@ public final class KakaoAutomator {
         // 9. Focus and type the message
         _ = AXHelpers.performAction(chatWindow, kAXRaiseAction as String)
         Thread.sleep(forTimeInterval: 0.3)
+
+        // ⓐ 입력 직전 — 클릭할 창이 맞는지.
+        try assertChatWindow(chatWindow, app: app, expect: chatName, selfChat: selfChat)
+
         AXHelpers.clickElement(inputField)
         Thread.sleep(forTimeInterval: 0.3)
 
-        if AXHelpers.setValue(inputField, message) {
-            Thread.sleep(forTimeInterval: 0.2)
-            AXHelpers.pressKey(keyCode: 36) // Return key
-        } else {
+        // ⓑ 타이핑 직전 — 클릭으로 포커스가 다른 데로 갔을 수 있다.
+        try assertChatWindow(chatWindow, app: app, expect: chatName, selfChat: selfChat)
+
+        if !AXHelpers.setValue(inputField, message) {
             _ = AXHelpers.focus(inputField)
             Thread.sleep(forTimeInterval: 0.1)
             AXHelpers.typeText(message)
-            Thread.sleep(forTimeInterval: 0.2)
-            AXHelpers.pressKey(keyCode: 36) // Return key
         }
+        Thread.sleep(forTimeInterval: 0.2)
+
+        // ⓒ **Return 직전 — 마지막 관문.** 창·포커스를 다시 보고, 입력창에 실제로 내 본문이
+        //    들어 있는지까지 확인한다. 여기서 틀리면 **누르지 않고 멈춘다.**
+        //    Return 은 포커스된 곳으로 가므로 이 확인이 오발송을 막는 최후의 지점이다.
+        try assertChatWindow(chatWindow, app: app, expect: chatName, selfChat: selfChat)
+        let typed = AXHelpers.value(inputField) ?? ""
+        if !typed.contains(message) {
+            throw AutomationError.wrongWindow(
+                expected: "input containing the message",
+                actual: typed.isEmpty ? "(empty input)" : String(typed.prefix(40))
+            )
+        }
+
+        AXHelpers.pressKey(keyCode: 36) // Return key
 
         // 10. Close the chat window
         Thread.sleep(forTimeInterval: 0.3)
@@ -145,6 +162,30 @@ public final class KakaoAutomator {
 
     /// Find the message input AXTextArea in a chat window.
     /// The input is in a top-level AXScrollArea that does NOT contain an AXTable (messages).
+
+    /// "지금 이 창이 정말 그 방인가"를 다시 확인한다.
+    ///
+    /// 한 번만 확인하고 끝내면 그 사이 창이 바뀌어도 모른다. 사용자가 직접 카톡을 쓰고 있거나
+    /// 다른 창이 끼어들면 실제로 그런 일이 생긴다(2026-10-31: 열려 있던 '이진영' 창으로
+    /// 메시지가 들어갔다). 그래서 **입력 직전·전송 직전** 매 단계마다 본다.
+    ///
+    /// 제목뿐 아니라 **포커스 창**도 본다 — Return 키는 포커스된 곳으로 가므로, 제목이 맞아도
+    /// 포커스가 옮겨가 있으면 엉뚱한 창으로 전송된다.
+    private func assertChatWindow(
+        _ window: AXUIElement, app: AXUIElement, expect chatName: String, selfChat: Bool
+    ) throws {
+        let title = AXHelpers.title(window) ?? ""
+        if !selfChat && title != chatName {
+            throw AutomationError.wrongWindow(expected: chatName, actual: title)
+        }
+        if let focused = AXHelpers.focusedWindow(app) {
+            let ftitle = AXHelpers.title(focused) ?? ""
+            if ftitle != title {
+                throw AutomationError.wrongWindow(expected: title, actual: "focus=\(ftitle)")
+            }
+        }
+    }
+
     private func findInputField(in window: AXUIElement) -> AXUIElement? {
         for child in AXHelpers.children(window) {
             guard AXHelpers.role(child) == "AXScrollArea" else { continue }
@@ -170,6 +211,9 @@ public enum AutomationError: Error, CustomStringConvertible {
     /// 방은 찾아 열었는데 채팅창이 제때 뜨지 않음. 입력창 구조 문제와 구별해야
     /// 진단이 된다 — 둘을 같은 에러로 던지는 바람에 한참 헤맸다(2026-10-31).
     case chatWindowNotOpened(String)
+    /// 입력 직전·전송 직전 재확인에서 대상 창이 아님이 드러난 경우.
+    /// 한 번 확인하고 끝내면 그 뒤 창이 바뀌어도 모른다 — 그래서 단계마다 본다.
+    case wrongWindow(expected: String, actual: String)
     case inputFieldNotFound
     case sendFailed(String)
 
@@ -181,6 +225,8 @@ public enum AutomationError: Error, CustomStringConvertible {
             return "Chat '\(name)' not found in the chat list"
         case .chatWindowNotOpened(let name):
             return "Opened '\(name)' but its chat window did not appear in time"
+        case .wrongWindow(let expected, let actual):
+            return "Aborted before sending: expected chat window '\(expected)' but found '\(actual)'"
         case .inputFieldNotFound:
             return "Could not find the message input field"
         case .sendFailed(let msg):
