@@ -93,8 +93,19 @@ public final class KakaoAutomator {
             throw AutomationError.chatWindowNotOpened(chatName)
         }
 
-        // 8. Find the message input field
-        guard let inputField = findInputField(in: chatWindow) else {
+        // 8. Find the message input field.
+        //    창이 뜬 직후에는 메시지 목록만 AX 트리에 올라와 있고 입력 영역은 조금 늦게
+        //    붙는다. 한 번만 찾으면 그 틈에 걸려 "Could not find the message input field"
+        //    로 끝난다(2026-10-31 실측: 덤프를 떠 보면 구조는 멀쩡했다 —
+        //    AXScrollArea(_NS:47) > AXTextArea(desc="메시지 입력")). 그래서 잠깐 기다려 본다.
+        var found: AXUIElement?
+        let inputDeadline = Date().addingTimeInterval(5.0)
+        repeat {
+            found = findInputField(in: chatWindow)
+            if found != nil { break }
+            Thread.sleep(forTimeInterval: 0.3)
+        } while Date() < inputDeadline
+        guard let inputField = found else {
             throw AutomationError.inputFieldNotFound
         }
 
