@@ -52,7 +52,11 @@ public final class KakaoAutomator {
             }
             row = selfRow
         } else {
-            guard let chatRow = AXHelpers.findChatRow(table, chatName: chatName) else {
+            // **정확 일치로 찾는다.** 부분 일치(기본값)는 조용한 오발송을 만든다 —
+            // 실측(2026-10-31): "이진영" 으로 보내면 같은 목록의
+            // "이진영, 정지원 (정, 지원)- AMP 100, 주태영 (joo, taeyoung)-" 단톡방이
+            // 먼저 걸릴 수 있다. 못 찾아 실패하는 쪽이 엉뚱한 사람에게 가는 것보다 낫다.
+            guard let chatRow = AXHelpers.findChatRow(table, chatName: chatName, exact: true) else {
                 throw AutomationError.chatNotFound(chatName)
             }
             row = chatRow
