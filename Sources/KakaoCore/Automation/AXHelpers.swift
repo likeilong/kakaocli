@@ -187,20 +187,37 @@ public enum AXHelpers {
     }
 
     /// Find the AXRow in a chat list whose name label matches the given text.
-    /// KakaoTalk chat list: AXTable > AXRow > AXCell > AXStaticText(id="_NS:18")
+    /// KakaoTalk chat list: AXTable > AXRow > AXCell > 첫 AXStaticText(= 방 이름)
+
+    /// 채팅 목록 행(AXCell)에서 **방 이름**을 꺼낸다.
+    ///
+    /// 예전에는 `AXStaticText` 중 identifier 가 `_NS:18` 인 것을 찾았는데, 카톡 업데이트로
+    /// `_NS:18` 이 **배지 AXImage** 로 바뀌고 이름은 `_NS:40` 으로 옮겨갔다. 그 탓에 어떤 방도
+    /// 찾지 못해 send 가 전부 "Chat '...' not found in the chat list" 로 실패했다(2026-10-31).
+    ///
+    /// identifier 는 카톡 버전마다 바뀌므로 거기에 기대지 않는다. 셀의 자식 순서는
+    /// 프로필 버튼 → 배지 이미지 → **이름** → 인원수 → 시각 이라, **첫 번째 AXStaticText**
+    /// 가 곧 이름이다. 인원수(Count Label)만 명시적으로 건너뛴다.
+    private static func chatRowName(_ cell: AXUIElement) -> String? {
+        for child in children(cell) {
+            guard role(child) == "AXStaticText" else { continue }
+            if identifier(child) == "Count Label" { continue }
+            let v = value(child) ?? ""
+            if v.isEmpty { continue }
+            return v
+        }
+        return nil
+    }
+
     public static func findChatRow(_ table: AXUIElement, chatName: String, exact: Bool = false) -> AXUIElement? {
         for row in children(table) {
             guard role(row) == "AXRow" else { continue }
             for cell in children(row) {
                 guard role(cell) == "AXCell" else { continue }
-                for child in children(cell) {
-                    if role(child) == "AXStaticText" && identifier(child) == "_NS:18" {
-                        let name = value(child) ?? ""
-                        let matches = exact ? name == chatName : name.localizedCaseInsensitiveContains(chatName)
-                        if matches {
-                            return row
-                        }
-                    }
+                guard let name = chatRowName(cell), !name.isEmpty else { continue }
+                let matches = exact ? name == chatName : name.localizedCaseInsensitiveContains(chatName)
+                if matches {
+                    return row
                 }
             }
         }
