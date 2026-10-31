@@ -81,12 +81,24 @@ public final class KakaoAutomator {
         }
 
         // 7. Wait for the chat window to appear
+        //
+        // ⚠️ **창 제목이 보내려는 방과 같은지 반드시 확인한다.**
+        //   예전에는 "메인 창이 아닌 첫 번째 창"을 집었는데, 이전 발송으로 **다른 방의
+        //   채팅창이 열린 채 남아 있으면** 그게 먼저 잡혀 거기에 입력했다.
+        //   2026-10-31 실측: 'Ai 인사이더 클럽' 으로 보낸 메시지가 열려 있던 '이진영'
+        //   채팅창으로 들어갔고, kakaocli 는 성공(exit 0)이라고 보고했다. 방 찾기를
+        //   정확 일치로 해도 이 단계에서 뒤집히면 소용이 없다.
+        //   제목이 끝내 안 맞으면 **보내지 않고 실패한다** — 잘못 가는 것보다 낫다.
         var chatWindow: AXUIElement?
         let windowDeadline = Date().addingTimeInterval(5.0)
         while Date() < windowDeadline {
             Thread.sleep(forTimeInterval: 0.5)
             let updatedWindows = AXHelpers.windows(app)
-            chatWindow = updatedWindows.first(where: { AXHelpers.identifier($0) != "Main Window" })
+            chatWindow = updatedWindows.first(where: {
+                guard AXHelpers.identifier($0) != "Main Window" else { return false }
+                guard !selfChat else { return true }  // 나와의 채팅은 제목을 예측할 수 없다
+                return AXHelpers.title($0) == chatName
+            })
             if chatWindow != nil { break }
         }
         guard let chatWindow else {
