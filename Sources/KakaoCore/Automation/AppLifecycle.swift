@@ -85,11 +85,16 @@ public enum AppLifecycle {
             if title.lowercased().contains("log in") || title == "로그인" {
                 return .loginScreen
             }
-            if AXHelpers.findFirst(window, role: "AXImage", identifier: "Logo") != nil {
-                return .loginScreen
-            }
+            // 채팅 목록 테이블이 있으면 로그인된 것 — 이 검사를 **먼저** 한다.
+            // chatListTable 은 창 바로 아래 2단계만 보지만(싸다), 아래 Logo 검색은
+            // findFirst 로 트리를 폭넓게 훑는다. 채팅 목록 탭이 열려 있으면 방이 전부
+            // 트리에 올라와 있어(실측: 1684개) 그 순회가 3분을 넘겨 ensureReady 가
+            // 통째로 타임아웃된다. 로그인 화면에는 채팅 목록이 없으므로 판별은 그대로다.
             if AXHelpers.chatListTable(window) != nil {
                 return .loggedIn
+            }
+            if AXHelpers.findFirst(window, role: "AXImage", identifier: "Logo") != nil {
+                return .loginScreen
             }
             return .loggedIn
         }

@@ -22,6 +22,13 @@ IDENTITY="${KAKAOCLI_SIGN_IDENTITY:-kakaocli-signing}"
 DEST="${KAKAOCLI_DEST:-$HOME/.local/bin/kakaocli}"
 cd "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# sqlcipher 는 Package.swift 가 pkgConfig 로 찾는다. pkg-config 바이너리가 없어도 SwiftPM 이
+# .pc 를 직접 읽지만, **경로를 알려줘야** 한다. 영맥처럼 pkg-config 미설치 환경에서는
+# 이게 없으면 "library 'sqlcipher' not found" 로 링크가 깨진다(2026-10-31 실측).
+for d in /opt/homebrew/opt/sqlcipher/lib/pkgconfig /usr/local/opt/sqlcipher/lib/pkgconfig; do
+  [ -f "$d/sqlcipher.pc" ] && export PKG_CONFIG_PATH="$d:${PKG_CONFIG_PATH:-}" && break
+done
+
 echo "[1/3] 빌드 (swift build -c release)"
 swift build -c release
 BIN=".build/release/kakaocli"
