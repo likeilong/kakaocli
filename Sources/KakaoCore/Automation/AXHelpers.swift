@@ -70,6 +70,13 @@ public enum AXHelpers {
     }
 
     /// Get the title/description of an element.
+    /// **진짜** AXWindow 만. kAXWindowsAttribute 는 AXApplication 요소를 돌려줄 때가 있어
+    /// (실측 2026-11-01: 창이 하나도 없는데 [AXApplication] 하나가 담겨 왔다)
+    /// `windows(_:).isEmpty` 로 "창이 있다"를 판단하면 안 된다.
+    public static func realWindows(_ appElement: AXUIElement) -> [AXUIElement] {
+        windows(appElement).filter { role($0) == "AXWindow" }
+    }
+
     /// 앱이 지금 포커스하고 있는 창. **Return 키는 여기로 간다** — 창 제목이 맞아도
     /// 포커스가 다른 창에 있으면 메시지가 엉뚱한 곳으로 전송된다.
     public static func focusedWindow(_ appElement: AXUIElement) -> AXUIElement? {

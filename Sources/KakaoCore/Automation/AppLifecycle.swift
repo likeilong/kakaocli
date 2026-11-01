@@ -69,8 +69,10 @@ public enum AppLifecycle {
             }
         }
 
-        // App is running but we can't determine state
-        if windows.isEmpty {
+        // App is running but we can't determine state.
+        // 여기서도 **진짜 창** 기준이어야 한다 — windows 에 AXApplication 이 섞여 들어오면
+        // "창이 있는데 분류 실패(.unknown)" 로 잘못 떨어지고, ensureReady 가 그대로 던진다.
+        if realWindows.isEmpty {
             return .launching
         }
 
@@ -300,7 +302,11 @@ public enum AppLifecycle {
         try? reopen.run()
         reopen.waitUntilExit()
         Thread.sleep(forTimeInterval: 1.0)
-        if !AXHelpers.windows(axApp).isEmpty { return }
+        // **진짜 AXWindow 로 판단한다.** windows(_:) 는 창이 없어도 AXApplication 요소를
+        // 담아 보낼 때가 있어, isEmpty 로 보면 "열렸다"고 오판하고 아래 폴백을 건너뛴다
+        // (실측 2026-11-01: 그 탓에 open -a 가 창을 못 열었는데도 메뉴 막대 경로가
+        //  실행되지 않아 send 가 "KakaoTalk has no open windows" 로 끝났다).
+        if !AXHelpers.realWindows(axApp).isEmpty { return }
 
         // 2) 그래도 창이 없으면 메뉴 막대 extra 의 '카카오톡 열기'를 누른다(구버전 경로).
         let script = """
